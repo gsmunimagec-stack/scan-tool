@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<title>Advanced Scan Tool</title>
+
+<script src="https://unpkg.com/html5-qrcode"></script>
+
+<style>
+body { font-family: Arial; background:#f4f6f8; padding:20px; }
+input, button { width:100%; padding:12px; margin:6px 0; font-size:16px; }
+button { background:#1976d2; color:white; border:none; cursor:pointer; }
+#reader { width:100%; margin-top:10px; }
+#status { margin-top:10px; font-weight:bold; }
+table { width:100%; border-collapse:collapse; margin-top:20px; }
+td, th { border:1px solid #ccc; padding:6px; font-size:14px; }
+</style>
+</head>
+
+<body>
+
+<h2>📦 Scan Tool Avancé</h2>
+
+<input id="bl_id" placeholder="ID Bon de Livraison">
+<input id="produit_id" placeholder="ID Produit">
+<input id="scan_input" placeholder="Scan (Douchette)">
+<button onclick="sendScan()">Envoyer Scan</button>
+
+<h3>📷 Scan par Caméra</h3>
+<div id="reader"></div>
+
+<div id="status"></div>
+
+<h3>📜 Historique (Local)</h3>
+<input id="search" placeholder="Recherche (Code / Produit / BL)" onkeyup="renderHistory()">
+<table>
+<thead>
+<tr>
+<th>Date</th><th>BL</th><th>Produit</th><th>Code</th><th>Status</th>
+</tr>
+</thead>
+<tbody id="history"></tbody>
+</table>
+
+<script>
+const API_URL = "https://script.google.com/macros/s/AKfycbx4hacmYdRkpYmvG86_AMErpNs6imUE2j22QvTMXxOVvl7oC-Dr3bCjV0nGdOHyyhDU/exec";
+let localData = JSON.parse(localStorage.getItem("scans") || "[]");
+
+function saveLocal(data) {
+  localData.push(data);
+  localStorage.setItem("scans", JSON.stringify(localData));
+}
+
+function isDuplicate(bl, produit, code) {
+  return localData.some(s =>
+    s.bl_id === bl &&
+    s.produit_id === produit &&
+    s.code_scanned === code
+  );
+}
+
+function sendScan(codeFromCamera = null) {
+  const bl = bl_id.value;
+  const produit = produit_id.value;
+  const code = codeFromCamera || scan_input.value;
+
+  if (!bl || !produit || !code) {
+    alert("عمر جميع الخانات");
+    return;
+  }
+
+  if (isDuplicate(bl, produit, code)) {
+    status.innerText = "⚠ Code مكرر";
+    return;
+  }
+
+  const payload = {
+    bl_id: bl,
+    produit_id: produit,
+    code_scanned: code,
+    date: new Date().toISOString(),
+    sent: false
+  };
+
+  saveLocal(payload);
+  scan_input.value = "";
+  status.innerText = "💾 Scan محفوظ محلياً";
+  sendPending();
+  renderHistory();
+}
+
+function sendPending() {
+  if (!navigator.onLine) return;
+
+  localData.forEach(item => {
+    if (!item.sent) {
+      fetch(API_URL, {
+        method: "POST",
+        body: JSON.stringify(item)
+      })
+      .then(() => {
+        item.sent = true;
+        localStorage.setItem("scans", JSON.stringify(localData));
+        renderHistory();
+      });
+    }
+  });
+}
+
+window.addEventListener("online", sendPending);
+
+function renderHistory() {
+  const q = search.value.toLowerCase();
+  history.innerHTML = "";
+
+  localData
+    .filter(s =>
+      s.code_scanned.toLowerCase().includes(q) ||
+      s.produit_id.toLowerCase().includes(q) ||
+      s.bl_id.toLowerCase().includes(q)
+    )
+    .forEach(s => {
+      history.innerHTML += `
+      <tr>
+        <td>${new Date(s.date).toLocaleString()}</td>
+        <td>${s.bl_id}</td>
+        <td>${s.produit_id}</td>
+        <td>${s.code_scanned}</td>
+        <td>${s.sent ? "✅ Envoyé" : "⏳ Offline"}</td>
+      </tr>`;
+    });
+}
+
+document.getElementById("scan_input").addEventListener("keypress", e => {
+  if (e.key === "Enter") sendScan();
+});
+
+/* CAMERA SCAN */
+const html5QrCode = new Html5Qrcode("reader");
+html5QrCode.start(
+  { facingMode: "environment" },
+  { fps: 10, qrbox: 250 },
+  decodedText => sendScan(decodedText)
+);
+
+renderHistory();
+</script>
+
+</body>
+</html>
