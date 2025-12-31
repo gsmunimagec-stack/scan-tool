@@ -1,193 +1,156 @@
 <!DOCTYPE html>
-<html lang="fr">
+<html lang="ar" dir="rtl">
 <head>
-  <meta charset="UTF-8">
-  <title>Advanced Scan Tool</title>
-
-  <!-- مكتبة html5-qrcode -->
-  <script src="https://unpkg.com/html5-qrcode"></script>
-
-  <style>
-    body { font-family: Arial, sans-serif; background:#f4f6f8; padding:20px; }
-    input, button { width:100%; padding:12px; margin:6px 0; font-size:16px; box-sizing:border-box; }
-    button { background:#1976d2; color:white; border:none; cursor:pointer; }
-    button:disabled { background:#90a4ae; cursor:not-allowed; }
-    #reader { width:100%; max-width:400px; margin:10px auto; }
-    #status { margin-top:10px; font-weight:bold; min-height:24px; }
-    table { width:100%; border-collapse:collapse; margin-top:20px; }
-    td, th { border:1px solid #ccc; padding:6px; font-size:14px; text-align:left; }
-    h2, h3 { margin-top:10px; }
-  </style>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>تطبيق تتبع المسح اللوجستي</title>
+    <link rel="manifest" href="manifest.json">
+    <style>
+        body { font-family: Arial, sans-serif; margin: 0; padding: 20px; background: #f4f4f4; }
+        .container { max-width: 600px; margin: auto; background: white; padding: 20px; border-radius: 8px; box-shadow: 0 0 10px rgba(0,0,0,0.1); }
+        input, button { width: 100%; padding: 10px; margin: 10px 0; border: 1px solid #ccc; border-radius: 4px; }
+        #scanner { display: none; height: 300px; }
+        #history { margin-top: 20px; }
+        .scan-item { padding: 10px; border-bottom: 1px solid #eee; }
+        .status-success { color: green; }
+        .status-pending { color: orange; }
+        .error { color: red; }
+    </style>
+    <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
 </head>
-
 <body>
+    <div class="container">
+        <h1>تتبع عمليات المسح</h1>
+        <input type="text" id="blId" placeholder="معرّف إشعار التسليم (BL ID)" required>
+        <input type="text" id="productId" placeholder="معرّف المنتج (Product ID)" required>
+        <input type="text" id="scanInput" placeholder="مسح الرمز (Barcode أو QR)" autofocus>
+        <button id="startCamera">بدء المسح بالكاميرا</button>
+        <div id="scanner"></div>
+        <div id="message" class="error"></div>
+        
+        <h2>سجل المسح</h2>
+        <input type="text" id="searchHistory" placeholder="بحث حسب BL ID أو Product ID أو الرمز">
+        <div id="history"></div>
+    </div>
 
-  <h2>📦 Scan Tool Avancé</h2>
+    <script>
+        const blIdInput = document.getElementById('blId');
+        const productIdInput = document.getElementById('productId');
+        const scanInput = document.getElementById('scanInput');
+        const startCameraBtn = document.getElementById('startCamera');
+        const scannerDiv = document.getElementById('scanner');
+        const messageDiv = document.getElementById('message');
+        const historyDiv = document.getElementById('history');
+        const searchHistoryInput = document.getElementById('searchHistory');
 
-  <input id="bl_id" placeholder="ID Bon de Livraison">
-  <input id="produit_id" placeholder="ID Produit">
-  <input id="scan_input" placeholder="Scan (Douchette)">
-  <button id="btn_send" onclick="sendScan()">Envoyer Scan</button>
+        let html5QrCode;
+        const SCRIPT_URL = 'https://script.google.com/macros/s/AKfycby88RlBlIqowHdSxX_px50mZAe9A1WB9DU8M_37LQ2OH1mT99op_ZMLjg0lWScBfw_qvA/exec'; // استبدل بـ URL الخاص بك
 
-  <h3>📷 Scan par Caméra</h3>
-  <div id="reader"></div>
+        // تحميل السجل من localStorage
+        let scans = JSON.parse(localStorage.getItem('scans')) || [];
+        renderHistory();
 
-  <div id="status"></div>
-
-  <h3>📜 Historique (Local)</h3>
-  <input id="search" placeholder="Recherche (Code / Produit / BL)" onkeyup="renderHistory()">
-  <table>
-    <thead>
-      <tr>
-        <th>Date</th><th>BL</th><th>Produit</th><th>Code</th><th>Status</th>
-      </tr>
-    </thead>
-    <tbody id="history"></tbody>
-  </table>
-
-  <script>
-    // ضع هنا رابط Web App من Google Apps Script
-    const API_URL = "https://script.google.com/macros/s/AKfycbymmBX36sXnUYWq7DeTpBuVlqT-CvKbR7IYFHzaI70QM8fr8T5Q87u4meDqQK4yj-yD/exec";
-
-    // تحميل البيانات من localStorage
-    let localData;
-    try {
-      localData = JSON.parse(localStorage.getItem("scans")) || [];
-    } catch (e) {
-      localData = [];
-    }
-
-    function saveLocal(data) {
-      localData.push(data);
-      localStorage.setItem("scans", JSON.stringify(localData));
-    }
-
-    function isDuplicate(bl, produit, code) {
-      return localData.some(s =>
-        s.bl_id === bl &&
-        s.produit_id === produit &&
-        s.code_scanned === code
-      );
-    }
-
-    function sendScan(codeFromCamera = null) {
-      const blInput = document.getElementById("bl_id");
-      const produitInput = document.getElementById("produit_id");
-      const scanInput = document.getElementById("scan_input");
-      const statusEl = document.getElementById("status");
-
-      const bl = blInput.value.trim();
-      const produit = produitInput.value.trim();
-      const code = (codeFromCamera || scanInput.value).trim();
-
-      if (!bl || !produit || !code) {
-        alert("عمر جميع الخانات: BL, Produit, Code");
-        return;
-      }
-
-      if (isDuplicate(bl, produit, code)) {
-        statusEl.innerText = "⚠️ Code مكرر لنفس BL و Produit";
-        return;
-      }
-
-      const payload = {
-        bl_id: bl,
-        produit_id: produit,
-        code_scanned: code,
-        date: new Date().toISOString(),
-        sent: false
-      };
-
-      saveLocal(payload);
-      scanInput.value = "";
-      statusEl.innerText = "💾 Scan محفوظ محلياً";
-
-      sendPending();
-      renderHistory();
-    }
-
-    function sendPending() {
-      if (!navigator.onLine) return;
-
-      const statusEl = document.getElementById("status");
-
-      localData.forEach((item) => {
-        if (!item.sent) {
-          fetch(API_URL, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(item)
-          })
-          .then(res => res.text())
-          .then(txt => {
-            console.log("Response:", txt);
-            item.sent = true;
-            localStorage.setItem("scans", JSON.stringify(localData));
-            statusEl.innerText = "✅ تم إرسال البيانات إلى Google Sheets";
-            renderHistory();
-          })
-          .catch(err => {
-            console.error("Fetch error:", err);
-            statusEl.innerText = "⏳ خطأ في الإرسال، سيتم إعادة المحاولة عند توفر الإنترنت";
-          });
-        }
-      });
-    }
-
-    window.addEventListener("online", sendPending);
-
-    function renderHistory() {
-      const searchInput = document.getElementById("search");
-      const historyTbody = document.getElementById("history");
-      const q = (searchInput.value || "").toLowerCase();
-
-      historyTbody.innerHTML = "";
-
-      localData
-        .filter(s =>
-          s.code_scanned.toLowerCase().includes(q) ||
-          s.produit_id.toLowerCase().includes(q) ||
-          s.bl_id.toLowerCase().includes(q)
-        )
-        .forEach(s => {
-          const tr = document.createElement("tr");
-          tr.innerHTML = `
-            <td>${new Date(s.date).toLocaleString()}</td>
-            <td>${s.bl_id}</td>
-            <td>${s.produit_id}</td>
-            <td>${s.code_scanned}</td>
-            <td>${s.sent ? "✅ Envoyé" : "⏳ Offline"}</td>
-          `;
-          historyTbody.appendChild(tr);
+        // دعم USB Scanner (كإدخال نصي)
+        scanInput.addEventListener('input', (e) => {
+            if (e.target.value.length > 0) {
+                processScan(e.target.value);
+                e.target.value = ''; // إعادة تهيئة
+            }
         });
-    }
 
-    document.getElementById("scan_input").addEventListener("keypress", e => {
-      if (e.key === "Enter") sendScan();
-    });
+        // بدء المسح بالكاميرا
+        startCameraBtn.addEventListener('click', () => {
+            scannerDiv.style.display = 'block';
+            html5QrCode = new Html5Qrcode("scanner");
+            html5QrCode.start({ facingMode: "environment" }, { fps: 10, qrbox: 250 }, (decodedText) => {
+                processScan(decodedText);
+            }, (error) => console.warn(error));
+        });
 
-    // ===== إعداد كاميرا QR باستعمال Html5QrcodeScanner =====
-    function onScanSuccess(decodedText, decodedResult) {
-      // كلما يتم سكان كود، يتم حفظه وإرساله تلقائياً
-      sendScan(decodedText);
-    }
+        // معالجة المسح
+        function processScan(code) {
+            const blId = blIdInput.value.trim();
+            const productId = productIdInput.value.trim();
+            if (!blId || !productId) {
+                messageDiv.textContent = 'يرجى إدخال BL ID و Product ID.';
+                return;
+            }
 
-    function onScanFailure(error) {
-      // أخطاء القراءة المتكررة يمكن تجاهلها
-      // console.warn(`QR error = ${error}`);
-    }
+            // التحقق من التكرار
+            if (scans.some(s => s.blId === blId && s.productId === productId && s.code === code)) {
+                messageDiv.textContent = 'هذا الرمز مكرر لنفس المنتج في هذا الإشعار.';
+                return;
+            }
 
-    let html5QrcodeScanner = new Html5QrcodeScanner(
-      "reader",
-      { fps: 10, qrbox: 250 },
-      false
-    );
-    html5QrcodeScanner.render(onScanSuccess, onScanFailure);
+            const scan = {
+                date: new Date().toLocaleDateString('ar'),
+                time: new Date().toLocaleTimeString('ar'),
+                blId,
+                productId,
+                code,
+                status: 'pending' // بانتظار الإرسال
+            };
 
-    // أول عرض للتاريخ
-    renderHistory();
-  </script>
+            scans.push(scan);
+            localStorage.setItem('scans', JSON.stringify(scans));
+            renderHistory();
+            messageDiv.textContent = '';
+            sendToServer(scan); // محاولة الإرسال
+            productIdInput.focus(); // التركيز على تغيير المنتج
+        }
+
+        // إرسال إلى الخادم
+        async function sendToServer(scan) {
+            if (!navigator.onLine) return;
+
+            try {
+                const response = await fetch(SCRIPT_URL, {
+                    method: 'POST',
+                    body: JSON.stringify(scan)
+                });
+                if (response.ok) {
+                    scan.status = 'success';
+                    updateLocalStorage();
+                    renderHistory();
+                }
+            } catch (error) {
+                console.error(error);
+            }
+        }
+
+        // إرسال المعلقة عند الاتصال
+        window.addEventListener('online', () => {
+            scans.filter(s => s.status === 'pending').forEach(sendToServer);
+        });
+
+        // عرض السجل
+        function renderHistory() {
+            historyDiv.innerHTML = '';
+            const search = searchHistoryInput.value.toLowerCase();
+            scans.filter(s => 
+                s.blId.toLowerCase().includes(search) ||
+                s.productId.toLowerCase().includes(search) ||
+                s.code.toLowerCase().includes(search)
+            ).forEach(s => {
+                const div = document.createElement('div');
+                div.className = 'scan-item';
+                div.innerHTML = `${s.date} ${s.time} - BL: ${s.blId} - Prod: ${s.productId} - Code: ${s.code} <span class="${s.status === 'success' ? 'status-success' : 'status-pending'}">${s.status === 'success' ? 'تم الإرسال' : 'محفوظ محلياً'}</span>`;
+                historyDiv.appendChild(div);
+            });
+        }
+
+        // تحديث localStorage
+        function updateLocalStorage() {
+            localStorage.setItem('scans', JSON.stringify(scans));
+        }
+
+        // بحث في السجل
+        searchHistoryInput.addEventListener('input', renderHistory);
+
+        // دعم PWA
+        if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.register('sw.js');
+        }
+    </script>
 </body>
 </html>
-
-
